@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { track } from "@vercel/analytics";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -7,10 +8,55 @@ import {
   Clock3,
   Lightbulb,
   RotateCcw,
+  ScrollText,
   Sparkles,
 } from "lucide-react";
 
 const UNSURE = "unsure";
+
+type EventLogEntry = {
+  id: number;
+  at: string;
+  name: string;
+  detail?: Record<string, unknown>;
+};
+
+let eventSeq = 0;
+
+function toTrackProps(
+  detail?: Record<string, unknown>,
+): Record<string, string | number | boolean | null> {
+  if (!detail) return {};
+  const props: Record<string, string | number | boolean | null> = {};
+  for (const [key, value] of Object.entries(detail)) {
+    if (
+      value === null ||
+      typeof value === "string" ||
+      typeof value === "number" ||
+      typeof value === "boolean"
+    ) {
+      props[key] = value;
+    } else {
+      props[key] = JSON.stringify(value);
+    }
+  }
+  return props;
+}
+
+function logEvent(
+  name: string,
+  detail?: Record<string, unknown>,
+): EventLogEntry {
+  const entry: EventLogEntry = {
+    id: ++eventSeq,
+    at: new Date().toISOString(),
+    name,
+    detail,
+  };
+  console.info(`[RoutineLab] ${name}`, detail ?? {});
+  track(name, toTrackProps(detail));
+  return entry;
+}
 
 type ProtocolBlock = {
   timeBlock: string;
@@ -246,21 +292,27 @@ function hasMatch(selected: string[] | undefined, target: string): boolean {
   return selected.includes(target);
 }
 
+function scoreMethod(
+  method: TimeManagementMethod,
+  userAnswers: UserAnswers,
+): number {
+  const criteria = method.targetCriteria;
+  let score = 0;
+  if (hasMatch(userAnswers.taskType, criteria.taskType)) score += 3;
+  if (hasMatch(userAnswers.energyPeak, criteria.energyPeak)) score += 2;
+  if (hasMatch(userAnswers.maxFocusTime, criteria.maxFocusTime)) score += 2;
+  if (hasMatch(userAnswers.primaryChallenge, criteria.primaryChallenge))
+    score += 2;
+  if (hasMatch(userAnswers.workStructure, criteria.workStructure)) score += 1;
+  return score;
+}
+
 export function findBestMethod(userAnswers: UserAnswers): TimeManagementMethod {
   let bestMatch = timeManagementDatabase[0];
   let maxScore = -1;
 
   timeManagementDatabase.forEach((method) => {
-    let score = 0;
-    const criteria = method.targetCriteria;
-
-    if (hasMatch(userAnswers.taskType, criteria.taskType)) score += 3;
-    if (hasMatch(userAnswers.energyPeak, criteria.energyPeak)) score += 2;
-    if (hasMatch(userAnswers.maxFocusTime, criteria.maxFocusTime)) score += 2;
-    if (hasMatch(userAnswers.primaryChallenge, criteria.primaryChallenge))
-      score += 2;
-    if (hasMatch(userAnswers.workStructure, criteria.workStructure)) score += 1;
-
+    const score = scoreMethod(method, userAnswers);
     if (score > maxScore) {
       maxScore = score;
       bestMatch = method;
@@ -495,6 +547,9 @@ export default function App() {
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "error">(
     "idle",
   );
+  const [events, setEvents] = useState<EventLogEntry[]>([]);
+  const startedRef = useRef(false);
+  const lastViewKeyRef = useRef<string | null>(null);
 
   const question = questionnaireQuestions[stepIndex];
   const currentSelection = selectedIds[question.id] ?? [];
@@ -505,47 +560,126 @@ export default function App() {
     [result],
   );
 
-  function toggleOption(option: QuestionOption) {
-    setSelectedIds((current) => {
-      const existing = current[question.id] ?? [];
-      let next: string[];
+  function record(name: string, detail?: Record<string, unknown>) {
+    const entry = logEvent(name, detail);
+    setEvents((current) => [...current, entry]);
+  }
 
-      if (question.selection === "single") {
-        next = existing.includes(option.id) ? [] : [option.id];
-      } else if (option.value === UNSURE) {
-        next = existing.includes(option.id) ? [] : [option.id];
-      } else {
-        const withoutUnsure = existing.filter((id) => {
-          const match = question.options.find((item) => item.id === id);
-          return match?.value !== UNSURE;
-        });
-        next = withoutUnsure.includes(option.id)
-          ? withoutUnsure.filter((id) => id !== option.id)
-          : [...withoutUnsure, option.id];
-      }
+  useEffect(() => {
+    if (startedRef.current) return;
+    startedRef.current = true;
+    record("session_start", { questionCount: questionnaireQuestions.length });
+  }, []);
 
-      return { ...current, [question.id]: next };
+  useEffect(() => {
+    if (result) {
+      document.title = `${result.name} | RoutineLab time management quiz`;
+    } else {
+      document.title = `Question ${stepIndex + 1} of ${questionnaireQuestions.length} | RoutineLab`;
+    }
+  }, [stepIndex, result]);
+
+  useEffect(() => {
+    const key = result ? `results:${result.id}` : `question:${stepIndex}`;
+    if (lastViewKeyRef.current === key) return;
+    lastViewKeyRef.current = key;
+
+    if (result) {
+      record("results_viewed", { methodId: result.id, methodName: result.name });
+      return;
+    }
+    record("question_viewed", {
+      step: stepIndex + 1,
+      questionId: question.id,
+      selection: question.selection,
+      title: question.title,
     });
+  }, [stepIndex, result?.id]);
+
+  function toggleOption(option: QuestionOption) {
+    const existing = selectedIds[question.id] ?? [];
+    let next: string[];
+
+    if (question.selection === "single") {
+      next = existing.includes(option.id) ? [] : [option.id];
+    } else if (option.value === UNSURE) {
+      next = existing.includes(option.id) ? [] : [option.id];
+    } else {
+      const withoutUnsure = existing.filter((id) => {
+        const match = question.options.find((item) => item.id === id);
+        return match?.value !== UNSURE;
+      });
+      next = withoutUnsure.includes(option.id)
+        ? withoutUnsure.filter((id) => id !== option.id)
+        : [...withoutUnsure, option.id];
+    }
+
+    record("option_toggled", {
+      questionId: question.id,
+      step: stepIndex + 1,
+      optionId: option.id,
+      optionLead: option.lead ?? null,
+      optionValue: option.value,
+      selected: next.includes(option.id),
+      selection: next,
+    });
+    setSelectedIds((current) => ({ ...current, [question.id]: next }));
   }
 
   function handleContinue() {
-    if (!canContinue) return;
+    if (!canContinue) {
+      record("continue_blocked", {
+        step: stepIndex + 1,
+        questionId: question.id,
+      });
+      return;
+    }
 
     const isLast = stepIndex === questionnaireQuestions.length - 1;
+    record("continue_clicked", {
+      step: stepIndex + 1,
+      questionId: question.id,
+      selectedIds: currentSelection,
+      isLast,
+    });
+
     if (!isLast) {
       setStepIndex((current) => current + 1);
       return;
     }
 
-    setResult(findBestMethod(toUserAnswers(selectedIds)));
+    const answers = toUserAnswers(selectedIds);
+    const match = findBestMethod(answers);
+    const scores = timeManagementDatabase.map((method) => ({
+      id: method.id,
+      name: method.name,
+      score: scoreMethod(method, answers),
+    }));
+    record("match_computed", {
+      methodId: match.id,
+      methodName: match.name,
+      answers,
+      scores,
+    });
+    setResult(match);
   }
 
   function handleBack() {
     if (stepIndex === 0 || result) return;
+    record("back_clicked", {
+      fromStep: stepIndex + 1,
+      fromQuestionId: question.id,
+      toStep: stepIndex,
+    });
     setStepIndex((current) => current - 1);
   }
 
   function handleReset() {
+    record("session_reset", {
+      from: result ? "results" : "questionnaire",
+      methodId: result?.id ?? null,
+      step: stepIndex + 1,
+    });
     setStepIndex(0);
     setSelectedIds({});
     setResult(null);
@@ -553,9 +687,11 @@ export default function App() {
   }
 
   async function handleCopy() {
+    record("copy_clicked", { methodId: result?.id ?? null });
     try {
       await navigator.clipboard.writeText(protocolText);
       setCopyStatus("copied");
+      record("protocol_copied", { method: "clipboard", methodId: result?.id });
     } catch {
       try {
         const textarea = document.createElement("textarea");
@@ -569,16 +705,45 @@ export default function App() {
         const ok = document.execCommand("copy");
         document.body.removeChild(textarea);
         setCopyStatus(ok ? "copied" : "error");
+        record(ok ? "protocol_copied" : "protocol_copy_failed", {
+          method: "execCommand",
+          methodId: result?.id,
+        });
       } catch {
         setCopyStatus("error");
+        record("protocol_copy_failed", {
+          method: "execCommand",
+          methodId: result?.id,
+        });
       }
     } finally {
       window.setTimeout(() => setCopyStatus("idle"), 1800);
     }
   }
 
+  async function handleCopyLog() {
+    const text = events
+      .map((entry) => {
+        const detail = entry.detail ? ` ${JSON.stringify(entry.detail)}` : "";
+        return `${entry.at} ${entry.name}${detail}`;
+      })
+      .join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      record("event_log_copied", { count: events.length, method: "clipboard" });
+    } catch {
+      record("event_log_copy_failed", { count: events.length });
+    }
+  }
+
   return (
     <div className="min-h-dvh bg-[#f4f1ea] text-stone-900">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-teal-800 focus:px-3 focus:py-2 focus:text-white"
+      >
+        Skip to quiz
+      </a>
       <div className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col px-4 py-6 sm:px-6 sm:py-10">
         <header className="mb-6 flex items-start justify-between gap-4">
           <div>
@@ -631,7 +796,7 @@ export default function App() {
           </div>
         ) : null}
 
-        <main className="flex-1">
+        <main id="main-content" className="flex-1" tabIndex={-1}>
           {result ? (
             <ResultsView
               method={result}
@@ -733,8 +898,8 @@ export default function App() {
                 <button
                   type="button"
                   onClick={handleContinue}
-                  disabled={!canContinue}
-                  className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-teal-800 px-5 text-base font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:bg-stone-300 disabled:text-stone-500"
+                  aria-disabled={!canContinue}
+                  className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-teal-800 px-5 text-base font-semibold text-white shadow-sm transition hover:bg-teal-700 aria-disabled:cursor-not-allowed aria-disabled:bg-stone-300 aria-disabled:text-stone-500 aria-disabled:hover:bg-stone-300"
                 >
                   {stepIndex === questionnaireQuestions.length - 1
                     ? "See my protocol"
@@ -745,8 +910,91 @@ export default function App() {
             </section>
           )}
         </main>
+
+        <footer>
+          <EventLogPanel
+            events={events}
+            onCopyLog={handleCopyLog}
+            onToggle={(open) =>
+              record(open ? "event_log_opened" : "event_log_closed", {
+                count: events.length,
+              })
+            }
+          />
+        </footer>
       </div>
     </div>
+  );
+}
+
+function formatLogTime(iso: string): string {
+  const date = new Date(iso);
+  return date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function EventLogPanel({
+  events,
+  onCopyLog,
+  onToggle,
+}: {
+  events: EventLogEntry[];
+  onCopyLog: () => void;
+  onToggle: (open: boolean) => void;
+}) {
+  const newestFirst = [...events].reverse();
+
+  return (
+    <details
+      className="mt-8 rounded-2xl border border-stone-200 bg-white shadow-sm"
+      onToggle={(event) => onToggle(event.currentTarget.open)}
+    >
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-medium text-stone-700">
+        <span className="inline-flex items-center gap-2">
+          <ScrollText className="size-4 text-teal-800" aria-hidden />
+          Event log
+          <span className="rounded-full bg-stone-100 px-2 py-0.5 text-xs font-semibold text-stone-600">
+            {events.length}
+          </span>
+        </span>
+        <span className="text-xs font-normal text-stone-500">RAM only</span>
+      </summary>
+      <div className="border-t border-stone-100 px-4 pb-4 pt-3">
+        <div className="mb-3 flex justify-end">
+          <button
+            type="button"
+            onClick={onCopyLog}
+            disabled={events.length === 0}
+            className="inline-flex min-h-9 items-center gap-2 rounded-full border border-stone-300 bg-white px-3 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <ClipboardCopy className="size-3.5" aria-hidden />
+            Copy log
+          </button>
+        </div>
+        {newestFirst.length === 0 ? (
+          <p className="text-sm text-stone-500">No events yet.</p>
+        ) : (
+          <ol className="max-h-64 space-y-2 overflow-auto font-mono text-xs leading-relaxed text-stone-700">
+            {newestFirst.map((entry) => (
+              <li key={entry.id} className="rounded-lg bg-stone-50 px-3 py-2">
+                <p className="text-stone-500">
+                  {formatLogTime(entry.at)}{" "}
+                  <span className="font-semibold text-teal-900">{entry.name}</span>
+                </p>
+                {entry.detail ? (
+                  <pre className="mt-1 whitespace-pre-wrap break-all text-[11px] text-stone-600">
+                    {JSON.stringify(entry.detail)}
+                  </pre>
+                ) : null}
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+    </details>
   );
 }
 

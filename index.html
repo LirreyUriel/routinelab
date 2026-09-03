@@ -3,16 +3,162 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Time Management Builder | RoutineLab</title>
+    <title>RoutineLab — Free Time Management Quiz &amp; Daily Protocol</title>
+    <meta
+      name="description"
+      content="A free 5-question quiz that matches how you actually work — building, projects, writing, or meetings — to a daily time-management protocol: Deep Work, Pomodoro, Personal Kanban, or Creative Flow."
+    />
+    <meta
+      name="robots"
+      content="index, follow, max-image-preview:large, max-snippet:-1"
+    />
+    <meta name="author" content="RoutineLab" />
+    <meta name="theme-color" content="#0f766e" />
+    <meta name="color-scheme" content="light" />
+    <meta name="application-name" content="RoutineLab" />
+    <meta name="apple-mobile-web-app-title" content="RoutineLab" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <link rel="canonical" href="https://routinelab.me/" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:site_name" content="RoutineLab" />
+    <meta
+      property="og:title"
+      content="RoutineLab — Free Time Management Quiz & Daily Protocol"
+    />
+    <meta
+      property="og:description"
+      content="Answer five practical questions about your workday and get a matched daily protocol: Deep Work, Pomodoro, Personal Kanban, or Creative Flow."
+    />
+    <meta property="og:url" content="https://routinelab.me/" />
+
+    <meta name="twitter:card" content="summary" />
+    <meta
+      name="twitter:title"
+      content="RoutineLab — Free Time Management Quiz"
+    />
+    <meta
+      name="twitter:description"
+      content="Match your real workday to a Deep Work, Pomodoro, Kanban, or Creative Flow protocol. Five questions. No sign-up."
+    />
+
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;0,9..40,800;1,9..40,400&display=swap"
       rel="stylesheet"
     />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebApplication",
+            "name": "RoutineLab",
+            "alternateName": "Workflow & Time Management Builder",
+            "url": "https://routinelab.me/",
+            "codeRepository": "https://github.com/LirreyUriel/routinelab",
+            "sameAs": ["https://github.com/LirreyUriel/routinelab"],
+            "description": "A free client-side quiz that matches how you work to a daily time-management protocol: Deep Work, Pomodoro Focus & Sprint, Agile Personal Kanban, or Creative Flow State.",
+            "applicationCategory": "ProductivityApplication",
+            "operatingSystem": "Any",
+            "browserRequirements": "Requires JavaScript",
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "USD"
+            },
+            "featureList": [
+              "Five-question work-style quiz",
+              "Multiple answers plus I'm not sure",
+              "Matched daily protocol",
+              "Copy protocol to clipboard",
+              "No account and no saved personal data"
+            ],
+            "inLanguage": "en"
+          },
+          {
+            "@type": "FAQPage",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "What does the RoutineLab quiz measure?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "It asks about the kind of work that fills your day, when you feel most clear-headed, how long you can stay with one task, what usually gets in the way, and whether you prefer time blocks or a flexible list."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Which time management methods can I get?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Deep Work Protocol, Pomodoro Focus & Sprint, Agile Personal Kanban, or Creative Flow State — based on a scoring match to your answers."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Do I need an account?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "No. The quiz runs in the browser and does not save answers to a server or to local storage."
+                }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      <main>
+        <h1>RoutineLab — Time management quiz</h1>
+        <p>
+          RoutineLab is a free, five-question quiz that matches how you actually
+          work to a daily protocol. JavaScript is required to take the quiz in
+          the browser.
+        </p>
+        <h2>Who it is for</h2>
+        <p>
+          People who build and code, coordinate projects, write or design, or
+          split the day between meetings and focused work — including if you are
+          not sure yet.
+        </p>
+        <h2>Possible results</h2>
+        <ul>
+          <li>
+            <strong>Deep Work Protocol</strong> — long, quiet focus blocks for
+            hard problem-solving.
+          </li>
+          <li>
+            <strong>Pomodoro Focus &amp; Sprint</strong> — short timed bursts
+            with built-in breaks.
+          </li>
+          <li>
+            <strong>Agile Personal Kanban</strong> — a simple board that limits
+            work in progress.
+          </li>
+          <li>
+            <strong>Creative Flow State</strong> — a looser rhythm for writing
+            and making.
+          </li>
+        </ul>
+        <p>
+          Live site:
+          <a href="https://routinelab.me/">routinelab.me</a>
+          · Source:
+          <a href="https://github.com/LirreyUriel/routinelab"
+            >github.com/LirreyUriel/routinelab</a
+          >
+        </p>
+      </main>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
