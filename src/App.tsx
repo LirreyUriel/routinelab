@@ -73,8 +73,6 @@ type TargetCriteria = {
 export type AnswerKey = keyof TargetCriteria;
 
 export type UserAnswers = Record<AnswerKey, string[]> & {
-  primaryByQuestion: Partial<Record<AnswerKey, string>>;
-  secondaryByQuestion: Partial<Record<AnswerKey, string>>;
   notes: Partial<Record<AnswerKey, string>>;
 };
 
@@ -295,16 +293,6 @@ function hasMatch(selected: string[] | undefined, target: string): boolean {
   return selected.includes(target);
 }
 
-function rankBonus(
-  userAnswers: UserAnswers,
-  key: AnswerKey,
-  target: string,
-): number {
-  if (userAnswers.primaryByQuestion[key] === target) return 2;
-  if (userAnswers.secondaryByQuestion[key] === target) return 1;
-  return 0;
-}
-
 function scoreMethod(
   method: TimeManagementMethod,
   userAnswers: UserAnswers,
@@ -317,16 +305,6 @@ function scoreMethod(
   if (hasMatch(userAnswers.primaryChallenge, criteria.primaryChallenge))
     score += 2;
   if (hasMatch(userAnswers.workStructure, criteria.workStructure)) score += 1;
-
-  score += rankBonus(userAnswers, "taskType", criteria.taskType);
-  score += rankBonus(userAnswers, "energyPeak", criteria.energyPeak);
-  score += rankBonus(userAnswers, "maxFocusTime", criteria.maxFocusTime);
-  score += rankBonus(
-    userAnswers,
-    "primaryChallenge",
-    criteria.primaryChallenge,
-  );
-  score += rankBonus(userAnswers, "workStructure", criteria.workStructure);
   return score;
 }
 
@@ -350,7 +328,7 @@ export const questionnaireQuestions: QuestionnaireQuestion[] = [
     id: "taskType",
     title: "What kind of work fills most of your day?",
     subtitle:
-      "Pick every type that shows up. If more than one applies, mark 1st and 2nd — 1st is what dominates your day.",
+      "Pick every type of work that shows up regularly.",
     selection: "multiple",
     options: [
       {
@@ -388,7 +366,7 @@ export const questionnaireQuestions: QuestionnaireQuestion[] = [
     id: "energyPeak",
     title: "When do you usually feel most clear-headed?",
     subtitle:
-      "Think about when starting something hard feels easier. If more than one time fits, rank 1st.",
+      "Think about when starting something hard feels easier, not when you wish you were productive.",
     selection: "multiple",
     options: [
       {
@@ -446,7 +424,7 @@ export const questionnaireQuestions: QuestionnaireQuestion[] = [
     id: "primaryChallenge",
     title: "What usually gets in the way?",
     subtitle:
-      "Select anything that shows up often. If several apply, mark 1st as the biggest obstacle.",
+      "Select anything that shows up often. This is the part the protocol will try to help with.",
     selection: "multiple",
     options: [
       {
@@ -478,7 +456,7 @@ export const questionnaireQuestions: QuestionnaireQuestion[] = [
     id: "workStructure",
     title: "What kind of day feels easier to stick with?",
     subtitle:
-      "There’s no right answer. If both could work, rank 1st as the setup you’d rather build around.",
+      "There’s no right answer. Pick the setup that sounds less stressful, even if you don’t use it yet.",
     selection: "multiple",
     options: [
       {
@@ -513,39 +491,10 @@ function valuesFromSelection(
   return [...new Set(values)];
 }
 
-function optionValue(
-  question: QuestionnaireQuestion,
-  optionId: string,
-): string | undefined {
-  return question.options.find((option) => option.id === optionId)?.value;
-}
-
-function rankedCriterionValues(
-  question: QuestionnaireQuestion,
-  selectedIds: string[] | undefined,
-): { primary?: string; secondary?: string } {
-  const ranked = (selectedIds ?? []).filter(
-    (id) => optionValue(question, id) !== UNSURE,
-  );
-  return {
-    primary: ranked[0] ? optionValue(question, ranked[0]) : undefined,
-    secondary: ranked[1] ? optionValue(question, ranked[1]) : undefined,
-  };
-}
-
 function toUserAnswers(
   selectedIds: Partial<Record<AnswerKey, string[]>>,
   notes: Partial<Record<AnswerKey, string>>,
 ): UserAnswers {
-  const primaryByQuestion: Partial<Record<AnswerKey, string>> = {};
-  const secondaryByQuestion: Partial<Record<AnswerKey, string>> = {};
-
-  questionnaireQuestions.forEach((question) => {
-    const ranks = rankedCriterionValues(question, selectedIds[question.id]);
-    if (ranks.primary) primaryByQuestion[question.id] = ranks.primary;
-    if (ranks.secondary) secondaryByQuestion[question.id] = ranks.secondary;
-  });
-
   return {
     taskType: valuesFromSelection(questionnaireQuestions[0], selectedIds.taskType),
     energyPeak: valuesFromSelection(
@@ -564,8 +513,6 @@ function toUserAnswers(
       questionnaireQuestions[4],
       selectedIds.workStructure,
     ),
-    primaryByQuestion,
-    secondaryByQuestion,
     notes,
   };
 }
@@ -631,9 +578,6 @@ export default function App() {
 
   const question = questionnaireQuestions[stepIndex];
   const currentSelection = selectedIds[question.id] ?? [];
-  const rankableIds = currentSelection.filter(
-    (id) => optionValue(question, id) !== UNSURE,
-  );
   const canContinue = currentSelection.length > 0;
   const totalSteps = questionnaireQuestions.length;
   const answeredCurrent = canContinue;
@@ -709,21 +653,6 @@ export default function App() {
       optionLead: option.lead ?? null,
       optionValue: option.value,
       selected: next.includes(option.id),
-      selection: next,
-    });
-    setSelectedIds((current) => ({ ...current, [question.id]: next }));
-  }
-
-  function setRank(optionId: string, rankIndex: 0 | 1) {
-    if (question.selection !== "multiple") return;
-    const existing = selectedIds[question.id] ?? [];
-    if (!existing.includes(optionId)) return;
-    const next = existing.filter((id) => id !== optionId);
-    next.splice(Math.min(rankIndex, next.length), 0, optionId);
-    record("option_ranked", {
-      questionId: question.id,
-      optionId,
-      rank: rankIndex + 1,
       selection: next,
     });
     setSelectedIds((current) => ({ ...current, [question.id]: next }));
@@ -904,7 +833,7 @@ export default function App() {
               <p className="text-sm font-medium text-teal-800">
                 {question.selection === "single"
                   ? "Choose one"
-                  : "Select all that apply, then rank 1st and 2nd"}
+                  : "Select all that apply"}
               </p>
               <h2 className="mt-1 text-2xl font-bold leading-tight text-stone-900 sm:text-3xl">
                 {question.title}
@@ -922,92 +851,57 @@ export default function App() {
                   const selected = currentSelection.includes(option.id);
                   const isUnsure = option.value === UNSURE;
                   const isSingle = question.selection === "single";
-                  const rankIndex = rankableIds.indexOf(option.id);
-                  const showRanks =
-                    !isSingle && selected && !isUnsure && rankableIds.length > 0;
 
                   return (
-                    <div
+                    <button
                       key={option.id}
-                      className={`flex items-stretch overflow-hidden rounded-2xl border ${
+                      type="button"
+                      onClick={() => toggleOption(option)}
+                      aria-pressed={isSingle ? undefined : selected}
+                      aria-checked={isSingle ? selected : undefined}
+                      role={isSingle ? "radio" : undefined}
+                      className={`flex min-h-14 items-start gap-3 rounded-2xl border px-4 py-3 text-left text-base leading-relaxed transition sm:text-lg ${
                         selected
                           ? isUnsure
                             ? "border-stone-500 bg-stone-100 text-stone-900 shadow-sm"
                             : "border-teal-700 bg-teal-50 text-teal-950 shadow-sm"
-                          : "border-stone-200 bg-stone-50 text-stone-800"
+                          : "border-stone-200 bg-stone-50 text-stone-800 hover:border-teal-600 hover:bg-white"
                       }`}
                     >
-                      <button
-                        type="button"
-                        onClick={() => toggleOption(option)}
-                        aria-pressed={isSingle ? undefined : selected}
-                        aria-checked={isSingle ? selected : undefined}
-                        role={isSingle ? "radio" : undefined}
-                        className="flex min-h-14 min-w-0 flex-1 items-start gap-3 px-4 py-3 text-left text-base leading-relaxed transition hover:bg-white/60 sm:text-lg"
+                      <span
+                        className={`mt-0.5 flex size-5 shrink-0 items-center justify-center border ${
+                          isSingle ? "rounded-full" : "rounded-md"
+                        } ${
+                          selected
+                            ? isUnsure
+                              ? "border-stone-700 bg-stone-800 text-white"
+                              : "border-teal-800 bg-teal-800 text-white"
+                            : "border-stone-300 bg-white"
+                        }`}
                       >
-                        <span
-                          className={`mt-0.5 flex size-5 shrink-0 items-center justify-center border ${
-                            isSingle ? "rounded-full" : "rounded-md"
-                          } ${
-                            selected
-                              ? isUnsure
-                                ? "border-stone-700 bg-stone-800 text-white"
-                                : "border-teal-800 bg-teal-800 text-white"
-                              : "border-stone-300 bg-white"
-                          }`}
-                        >
-                          {selected ? (
-                            isSingle ? (
-                              <span className="size-2 rounded-full bg-white" />
-                            ) : (
-                              <Check className="size-3.5" aria-hidden />
-                            )
-                          ) : null}
-                        </span>
-                        <span className="min-w-0">
-                          {option.lead ? (
-                            <>
-                              <span className="block font-bold text-stone-900">
-                                {option.lead}
-                              </span>
-                              <span className="mt-0.5 block text-[0.95em] text-stone-600">
-                                {option.label}
-                              </span>
-                            </>
+                        {selected ? (
+                          isSingle ? (
+                            <span className="size-2 rounded-full bg-white" />
                           ) : (
-                            option.label
-                          )}
-                        </span>
-                      </button>
-                      {showRanks ? (
-                        <div className="flex shrink-0 flex-col justify-center gap-1 border-l border-teal-200/80 px-2 py-2">
-                          <button
-                            type="button"
-                            onClick={() => setRank(option.id, 0)}
-                            className={`min-h-8 rounded-lg px-2 text-xs font-semibold ${
-                              rankIndex === 0
-                                ? "bg-teal-800 text-white"
-                                : "bg-white text-teal-900 hover:bg-teal-100"
-                            }`}
-                          >
-                            1st
-                          </button>
-                          {rankableIds.length > 1 ? (
-                            <button
-                              type="button"
-                              onClick={() => setRank(option.id, 1)}
-                              className={`min-h-8 rounded-lg px-2 text-xs font-semibold ${
-                                rankIndex === 1
-                                  ? "bg-teal-700 text-white"
-                                  : "bg-white text-teal-900 hover:bg-teal-100"
-                              }`}
-                            >
-                              2nd
-                            </button>
-                          ) : null}
-                        </div>
-                      ) : null}
-                    </div>
+                            <Check className="size-3.5" aria-hidden />
+                          )
+                        ) : null}
+                      </span>
+                      <span className="min-w-0">
+                        {option.lead ? (
+                          <>
+                            <span className="block font-bold text-stone-900">
+                              {option.lead}
+                            </span>
+                            <span className="mt-0.5 block text-[0.95em] text-stone-600">
+                              {option.label}
+                            </span>
+                          </>
+                        ) : (
+                          option.label
+                        )}
+                      </span>
+                    </button>
                   );
                 })}
               </div>
