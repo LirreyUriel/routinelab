@@ -8,7 +8,6 @@ import {
   Clock3,
   Lightbulb,
   RotateCcw,
-  ScrollText,
   Sparkles,
 } from "lucide-react";
 
@@ -73,7 +72,11 @@ type TargetCriteria = {
 
 export type AnswerKey = keyof TargetCriteria;
 
-export type UserAnswers = Record<AnswerKey, string[]>;
+export type UserAnswers = Record<AnswerKey, string[]> & {
+  primaryByQuestion: Partial<Record<AnswerKey, string>>;
+  secondaryByQuestion: Partial<Record<AnswerKey, string>>;
+  notes: Partial<Record<AnswerKey, string>>;
+};
 
 type TimeManagementMethod = {
   id: string;
@@ -292,6 +295,16 @@ function hasMatch(selected: string[] | undefined, target: string): boolean {
   return selected.includes(target);
 }
 
+function rankBonus(
+  userAnswers: UserAnswers,
+  key: AnswerKey,
+  target: string,
+): number {
+  if (userAnswers.primaryByQuestion[key] === target) return 2;
+  if (userAnswers.secondaryByQuestion[key] === target) return 1;
+  return 0;
+}
+
 function scoreMethod(
   method: TimeManagementMethod,
   userAnswers: UserAnswers,
@@ -304,6 +317,16 @@ function scoreMethod(
   if (hasMatch(userAnswers.primaryChallenge, criteria.primaryChallenge))
     score += 2;
   if (hasMatch(userAnswers.workStructure, criteria.workStructure)) score += 1;
+
+  score += rankBonus(userAnswers, "taskType", criteria.taskType);
+  score += rankBonus(userAnswers, "energyPeak", criteria.energyPeak);
+  score += rankBonus(userAnswers, "maxFocusTime", criteria.maxFocusTime);
+  score += rankBonus(
+    userAnswers,
+    "primaryChallenge",
+    criteria.primaryChallenge,
+  );
+  score += rankBonus(userAnswers, "workStructure", criteria.workStructure);
   return score;
 }
 
@@ -327,7 +350,7 @@ export const questionnaireQuestions: QuestionnaireQuestion[] = [
     id: "taskType",
     title: "What kind of work fills most of your day?",
     subtitle:
-      "Focus on the activity itself. Pick every type of work that shows up regularly.",
+      "Pick every type that shows up. If more than one applies, mark 1st and 2nd — 1st is what dominates your day.",
     selection: "multiple",
     options: [
       {
@@ -365,7 +388,7 @@ export const questionnaireQuestions: QuestionnaireQuestion[] = [
     id: "energyPeak",
     title: "When do you usually feel most clear-headed?",
     subtitle:
-      "Think about when starting something hard feels easier, not when you wish you were productive.",
+      "Think about when starting something hard feels easier. If more than one time fits, rank 1st.",
     selection: "multiple",
     options: [
       {
@@ -423,7 +446,7 @@ export const questionnaireQuestions: QuestionnaireQuestion[] = [
     id: "primaryChallenge",
     title: "What usually gets in the way?",
     subtitle:
-      "Select anything that shows up often. This is the part the protocol will try to help with.",
+      "Select anything that shows up often. If several apply, mark 1st as the biggest obstacle.",
     selection: "multiple",
     options: [
       {
@@ -455,7 +478,7 @@ export const questionnaireQuestions: QuestionnaireQuestion[] = [
     id: "workStructure",
     title: "What kind of day feels easier to stick with?",
     subtitle:
-      "There’s no right answer. Pick the setup that sounds less stressful, even if you don’t use it yet.",
+      "There’s no right answer. If both could work, rank 1st as the setup you’d rather build around.",
     selection: "multiple",
     options: [
       {
@@ -490,9 +513,39 @@ function valuesFromSelection(
   return [...new Set(values)];
 }
 
+function optionValue(
+  question: QuestionnaireQuestion,
+  optionId: string,
+): string | undefined {
+  return question.options.find((option) => option.id === optionId)?.value;
+}
+
+function rankedCriterionValues(
+  question: QuestionnaireQuestion,
+  selectedIds: string[] | undefined,
+): { primary?: string; secondary?: string } {
+  const ranked = (selectedIds ?? []).filter(
+    (id) => optionValue(question, id) !== UNSURE,
+  );
+  return {
+    primary: ranked[0] ? optionValue(question, ranked[0]) : undefined,
+    secondary: ranked[1] ? optionValue(question, ranked[1]) : undefined,
+  };
+}
+
 function toUserAnswers(
   selectedIds: Partial<Record<AnswerKey, string[]>>,
+  notes: Partial<Record<AnswerKey, string>>,
 ): UserAnswers {
+  const primaryByQuestion: Partial<Record<AnswerKey, string>> = {};
+  const secondaryByQuestion: Partial<Record<AnswerKey, string>> = {};
+
+  questionnaireQuestions.forEach((question) => {
+    const ranks = rankedCriterionValues(question, selectedIds[question.id]);
+    if (ranks.primary) primaryByQuestion[question.id] = ranks.primary;
+    if (ranks.secondary) secondaryByQuestion[question.id] = ranks.secondary;
+  });
+
   return {
     taskType: valuesFromSelection(questionnaireQuestions[0], selectedIds.taskType),
     energyPeak: valuesFromSelection(
@@ -511,10 +564,31 @@ function toUserAnswers(
       questionnaireQuestions[4],
       selectedIds.workStructure,
     ),
+    primaryByQuestion,
+    secondaryByQuestion,
+    notes,
   };
 }
 
-function formatProtocolText(method: TimeManagementMethod): string {
+function collectedNotes(notes: Partial<Record<AnswerKey, string>>): string[] {
+  return questionnaireQuestions.flatMap((question) => {
+    const text = notes[question.id]?.trim();
+    return text ? [`${question.title}: ${text}`] : [];
+  });
+}
+
+function formatEta(remainingQuestions: number): string {
+  if (remainingQuestions <= 0) return "Almost done — then your protocol";
+  const seconds = remainingQuestions * 18;
+  if (seconds >= 80) return "About a minute and a half left";
+  if (seconds >= 50) return "About a minute left";
+  return "Less than a minute left";
+}
+
+function formatProtocolText(
+  method: TimeManagementMethod,
+  notes: Partial<Record<AnswerKey, string>>,
+): string {
   const principles = method.corePrinciples
     .map((item) => `• ${item}`)
     .join("\n");
@@ -522,6 +596,7 @@ function formatProtocolText(method: TimeManagementMethod): string {
     .map((block) => `${block.timeBlock}\n${block.action}`)
     .join("\n\n");
   const tips = method.customTips.map((item) => `• ${item}`).join("\n");
+  const noteLines = collectedNotes(notes);
 
   return [
     method.name,
@@ -535,6 +610,9 @@ function formatProtocolText(method: TimeManagementMethod): string {
     "",
     "Tips for your challenge",
     tips,
+    ...(noteLines.length
+      ? ["", "Your notes", ...noteLines.map((item) => `• ${item}`)]
+      : []),
   ].join("\n");
 }
 
@@ -543,26 +621,36 @@ export default function App() {
   const [selectedIds, setSelectedIds] = useState<
     Partial<Record<AnswerKey, string[]>>
   >({});
+  const [notes, setNotes] = useState<Partial<Record<AnswerKey, string>>>({});
   const [result, setResult] = useState<TimeManagementMethod | null>(null);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "error">(
     "idle",
   );
-  const [events, setEvents] = useState<EventLogEntry[]>([]);
   const startedRef = useRef(false);
   const lastViewKeyRef = useRef<string | null>(null);
 
   const question = questionnaireQuestions[stepIndex];
   const currentSelection = selectedIds[question.id] ?? [];
+  const rankableIds = currentSelection.filter(
+    (id) => optionValue(question, id) !== UNSURE,
+  );
   const canContinue = currentSelection.length > 0;
+  const totalSteps = questionnaireQuestions.length;
+  const answeredCurrent = canContinue;
+  const progressPercent = Math.min(
+    100,
+    ((stepIndex + (answeredCurrent ? 1 : 0.18)) / totalSteps) * 100,
+  );
+  const remainingQuestions = totalSteps - stepIndex - (answeredCurrent ? 1 : 0);
+  const etaLabel = formatEta(remainingQuestions);
 
   const protocolText = useMemo(
-    () => (result ? formatProtocolText(result) : ""),
-    [result],
+    () => (result ? formatProtocolText(result, notes) : ""),
+    [result, notes],
   );
 
   function record(name: string, detail?: Record<string, unknown>) {
-    const entry = logEvent(name, detail);
-    setEvents((current) => [...current, entry]);
+    logEvent(name, detail);
   }
 
   useEffect(() => {
@@ -626,6 +714,21 @@ export default function App() {
     setSelectedIds((current) => ({ ...current, [question.id]: next }));
   }
 
+  function setRank(optionId: string, rankIndex: 0 | 1) {
+    if (question.selection !== "multiple") return;
+    const existing = selectedIds[question.id] ?? [];
+    if (!existing.includes(optionId)) return;
+    const next = existing.filter((id) => id !== optionId);
+    next.splice(Math.min(rankIndex, next.length), 0, optionId);
+    record("option_ranked", {
+      questionId: question.id,
+      optionId,
+      rank: rankIndex + 1,
+      selection: next,
+    });
+    setSelectedIds((current) => ({ ...current, [question.id]: next }));
+  }
+
   function handleContinue() {
     if (!canContinue) {
       record("continue_blocked", {
@@ -648,7 +751,7 @@ export default function App() {
       return;
     }
 
-    const answers = toUserAnswers(selectedIds);
+    const answers = toUserAnswers(selectedIds, notes);
     const match = findBestMethod(answers);
     const scores = timeManagementDatabase.map((method) => ({
       id: method.id,
@@ -682,6 +785,7 @@ export default function App() {
     });
     setStepIndex(0);
     setSelectedIds({});
+    setNotes({});
     setResult(null);
     setCopyStatus("idle");
   }
@@ -721,21 +825,6 @@ export default function App() {
     }
   }
 
-  async function handleCopyLog() {
-    const text = events
-      .map((entry) => {
-        const detail = entry.detail ? ` ${JSON.stringify(entry.detail)}` : "";
-        return `${entry.at} ${entry.name}${detail}`;
-      })
-      .join("\n");
-    try {
-      await navigator.clipboard.writeText(text);
-      record("event_log_copied", { count: events.length, method: "clipboard" });
-    } catch {
-      record("event_log_copy_failed", { count: events.length });
-    }
-  }
-
   return (
     <div className="min-h-dvh bg-[#f4f1ea] text-stone-900">
       <a
@@ -755,8 +844,9 @@ export default function App() {
             </h1>
             {!result ? (
               <p className="mt-2 max-w-xl text-sm leading-relaxed text-stone-600 sm:text-base">
-                Answer based on how work actually feels. Select all that apply —
-                “I’m not sure” is a valid answer.
+                Your answers shape a daily protocol: when to do deep work, how
+                long to stay in a block, and which tips to use for the thing that
+                usually gets in the way. Nothing is stored on a server.
               </p>
             ) : null}
           </div>
@@ -774,25 +864,29 @@ export default function App() {
 
         {!result ? (
           <div className="mb-5">
-            <div className="mb-2 flex items-center justify-between text-sm text-stone-600">
+            <div className="mb-2 flex flex-col gap-1 text-sm text-stone-600 sm:flex-row sm:items-center sm:justify-between">
               <span>
-                Question {stepIndex + 1} of {questionnaireQuestions.length}
+                Question {stepIndex + 1} of {totalSteps}
+                {answeredCurrent ? " · answered" : ""}
               </span>
-              <span>
-                {Math.round(
-                  (stepIndex / questionnaireQuestions.length) * 100,
-                )}
-                %
-              </span>
+              <span className="text-stone-500">{etaLabel}</span>
             </div>
-            <div className="h-2 overflow-hidden rounded-full bg-stone-200">
+            <div
+              className="h-2.5 overflow-hidden rounded-full bg-stone-200"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(progressPercent)}
+              aria-label="Quiz progress"
+            >
               <div
-                className="h-full rounded-full bg-teal-700 transition-all duration-300"
-                style={{
-                  width: `${(stepIndex / questionnaireQuestions.length) * 100}%`,
-                }}
+                className="h-full rounded-full bg-teal-700 transition-[width] duration-500 ease-out"
+                style={{ width: `${progressPercent}%` }}
               />
             </div>
+            <p className="mt-1.5 text-xs text-stone-500">
+              {Math.round(progressPercent)}% complete
+            </p>
           </div>
         ) : null}
 
@@ -800,6 +894,7 @@ export default function App() {
           {result ? (
             <ResultsView
               method={result}
+              notes={collectedNotes(notes)}
               copyStatus={copyStatus}
               onCopy={handleCopy}
               onReset={handleReset}
@@ -809,7 +904,7 @@ export default function App() {
               <p className="text-sm font-medium text-teal-800">
                 {question.selection === "single"
                   ? "Choose one"
-                  : "Select all that apply"}
+                  : "Select all that apply, then rank 1st and 2nd"}
               </p>
               <h2 className="mt-1 text-2xl font-bold leading-tight text-stone-900 sm:text-3xl">
                 {question.title}
@@ -827,60 +922,121 @@ export default function App() {
                   const selected = currentSelection.includes(option.id);
                   const isUnsure = option.value === UNSURE;
                   const isSingle = question.selection === "single";
+                  const rankIndex = rankableIds.indexOf(option.id);
+                  const showRanks =
+                    !isSingle && selected && !isUnsure && rankableIds.length > 0;
 
                   return (
-                    <button
+                    <div
                       key={option.id}
-                      type="button"
-                      onClick={() => toggleOption(option)}
-                      aria-pressed={isSingle ? undefined : selected}
-                      aria-checked={isSingle ? selected : undefined}
-                      role={isSingle ? "radio" : undefined}
-                      className={`flex min-h-14 items-start gap-3 rounded-2xl border px-4 py-3 text-left text-base leading-relaxed transition sm:text-lg ${
+                      className={`flex items-stretch overflow-hidden rounded-2xl border ${
                         selected
                           ? isUnsure
                             ? "border-stone-500 bg-stone-100 text-stone-900 shadow-sm"
                             : "border-teal-700 bg-teal-50 text-teal-950 shadow-sm"
-                          : "border-stone-200 bg-stone-50 text-stone-800 hover:border-teal-600 hover:bg-white"
+                          : "border-stone-200 bg-stone-50 text-stone-800"
                       }`}
                     >
-                      <span
-                        className={`mt-0.5 flex size-5 shrink-0 items-center justify-center border ${
-                          isSingle ? "rounded-full" : "rounded-md"
-                        } ${
-                          selected
-                            ? isUnsure
-                              ? "border-stone-700 bg-stone-800 text-white"
-                              : "border-teal-800 bg-teal-800 text-white"
-                            : "border-stone-300 bg-white"
-                        }`}
+                      <button
+                        type="button"
+                        onClick={() => toggleOption(option)}
+                        aria-pressed={isSingle ? undefined : selected}
+                        aria-checked={isSingle ? selected : undefined}
+                        role={isSingle ? "radio" : undefined}
+                        className="flex min-h-14 min-w-0 flex-1 items-start gap-3 px-4 py-3 text-left text-base leading-relaxed transition hover:bg-white/60 sm:text-lg"
                       >
-                        {selected ? (
-                          isSingle ? (
-                            <span className="size-2 rounded-full bg-white" />
+                        <span
+                          className={`mt-0.5 flex size-5 shrink-0 items-center justify-center border ${
+                            isSingle ? "rounded-full" : "rounded-md"
+                          } ${
+                            selected
+                              ? isUnsure
+                                ? "border-stone-700 bg-stone-800 text-white"
+                                : "border-teal-800 bg-teal-800 text-white"
+                              : "border-stone-300 bg-white"
+                          }`}
+                        >
+                          {selected ? (
+                            isSingle ? (
+                              <span className="size-2 rounded-full bg-white" />
+                            ) : (
+                              <Check className="size-3.5" aria-hidden />
+                            )
+                          ) : null}
+                        </span>
+                        <span className="min-w-0">
+                          {option.lead ? (
+                            <>
+                              <span className="block font-bold text-stone-900">
+                                {option.lead}
+                              </span>
+                              <span className="mt-0.5 block text-[0.95em] text-stone-600">
+                                {option.label}
+                              </span>
+                            </>
                           ) : (
-                            <Check className="size-3.5" aria-hidden />
-                          )
-                        ) : null}
-                      </span>
-                      <span className="min-w-0">
-                        {option.lead ? (
-                          <>
-                            <span className="block font-bold text-stone-900">
-                              {option.lead}
-                            </span>
-                            <span className="mt-0.5 block text-[0.95em] text-stone-600">
-                              {option.label}
-                            </span>
-                          </>
-                        ) : (
-                          option.label
-                        )}
-                      </span>
-                    </button>
+                            option.label
+                          )}
+                        </span>
+                      </button>
+                      {showRanks ? (
+                        <div className="flex shrink-0 flex-col justify-center gap-1 border-l border-teal-200/80 px-2 py-2">
+                          <button
+                            type="button"
+                            onClick={() => setRank(option.id, 0)}
+                            className={`min-h-8 rounded-lg px-2 text-xs font-semibold ${
+                              rankIndex === 0
+                                ? "bg-teal-800 text-white"
+                                : "bg-white text-teal-900 hover:bg-teal-100"
+                            }`}
+                          >
+                            1st
+                          </button>
+                          {rankableIds.length > 1 ? (
+                            <button
+                              type="button"
+                              onClick={() => setRank(option.id, 1)}
+                              className={`min-h-8 rounded-lg px-2 text-xs font-semibold ${
+                                rankIndex === 1
+                                  ? "bg-teal-700 text-white"
+                                  : "bg-white text-teal-900 hover:bg-teal-100"
+                              }`}
+                            >
+                              2nd
+                            </button>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
                   );
                 })}
               </div>
+
+              <label className="mt-5 block">
+                <span className="text-sm font-medium text-stone-700">
+                  Other / a personal note (optional)
+                </span>
+                <textarea
+                  value={notes[question.id] ?? ""}
+                  onChange={(event) => {
+                    const value = event.target.value.slice(0, 280);
+                    setNotes((current) => ({
+                      ...current,
+                      [question.id]: value,
+                    }));
+                  }}
+                  onBlur={(event) =>
+                    record("note_updated", {
+                      questionId: question.id,
+                      length: event.target.value.trim().length,
+                    })
+                  }
+                  rows={2}
+                  maxLength={280}
+                  placeholder="A nuance that the options don’t capture…"
+                  className="mt-1.5 w-full resize-y rounded-2xl border border-stone-200 bg-stone-50 px-3 py-2 text-sm leading-relaxed text-stone-800 outline-none transition placeholder:text-stone-400 focus:border-teal-700 focus:bg-white"
+                />
+              </label>
 
               <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
                 {stepIndex > 0 ? (
@@ -910,101 +1066,20 @@ export default function App() {
             </section>
           )}
         </main>
-
-        <footer>
-          <EventLogPanel
-            events={events}
-            onCopyLog={handleCopyLog}
-            onToggle={(open) =>
-              record(open ? "event_log_opened" : "event_log_closed", {
-                count: events.length,
-              })
-            }
-          />
-        </footer>
       </div>
     </div>
   );
 }
 
-function formatLogTime(iso: string): string {
-  const date = new Date(iso);
-  return date.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}
-
-function EventLogPanel({
-  events,
-  onCopyLog,
-  onToggle,
-}: {
-  events: EventLogEntry[];
-  onCopyLog: () => void;
-  onToggle: (open: boolean) => void;
-}) {
-  const newestFirst = [...events].reverse();
-
-  return (
-    <details
-      className="mt-8 rounded-2xl border border-stone-200 bg-white shadow-sm"
-      onToggle={(event) => onToggle(event.currentTarget.open)}
-    >
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-medium text-stone-700">
-        <span className="inline-flex items-center gap-2">
-          <ScrollText className="size-4 text-teal-800" aria-hidden />
-          Event log
-          <span className="rounded-full bg-stone-100 px-2 py-0.5 text-xs font-semibold text-stone-600">
-            {events.length}
-          </span>
-        </span>
-        <span className="text-xs font-normal text-stone-500">RAM only</span>
-      </summary>
-      <div className="border-t border-stone-100 px-4 pb-4 pt-3">
-        <div className="mb-3 flex justify-end">
-          <button
-            type="button"
-            onClick={onCopyLog}
-            disabled={events.length === 0}
-            className="inline-flex min-h-9 items-center gap-2 rounded-full border border-stone-300 bg-white px-3 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <ClipboardCopy className="size-3.5" aria-hidden />
-            Copy log
-          </button>
-        </div>
-        {newestFirst.length === 0 ? (
-          <p className="text-sm text-stone-500">No events yet.</p>
-        ) : (
-          <ol className="max-h-64 space-y-2 overflow-auto font-mono text-xs leading-relaxed text-stone-700">
-            {newestFirst.map((entry) => (
-              <li key={entry.id} className="rounded-lg bg-stone-50 px-3 py-2">
-                <p className="text-stone-500">
-                  {formatLogTime(entry.at)}{" "}
-                  <span className="font-semibold text-teal-900">{entry.name}</span>
-                </p>
-                {entry.detail ? (
-                  <pre className="mt-1 whitespace-pre-wrap break-all text-[11px] text-stone-600">
-                    {JSON.stringify(entry.detail)}
-                  </pre>
-                ) : null}
-              </li>
-            ))}
-          </ol>
-        )}
-      </div>
-    </details>
-  );
-}
-
 function ResultsView({
   method,
+  notes,
   copyStatus,
   onCopy,
   onReset,
 }: {
   method: TimeManagementMethod;
+  notes: string[];
   copyStatus: "idle" | "copied" | "error";
   onCopy: () => void;
   onReset: () => void;
@@ -1068,6 +1143,22 @@ function ResultsView({
           ))}
         </ul>
       </section>
+
+      {notes.length > 0 ? (
+        <section className="rounded-3xl border border-stone-200 bg-white p-5 shadow-sm sm:p-7">
+          <h3 className="text-lg font-bold text-stone-900">Your notes</h3>
+          <ul className="mt-4 space-y-3">
+            {notes.map((note) => (
+              <li
+                key={note}
+                className="rounded-2xl bg-stone-50 px-4 py-3 leading-relaxed text-stone-800"
+              >
+                {note}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       <div className="sticky bottom-4 grid gap-3 sm:grid-cols-2">
         <button
